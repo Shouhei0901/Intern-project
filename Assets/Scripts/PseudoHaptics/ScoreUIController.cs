@@ -18,8 +18,10 @@ namespace PseudoHapticsCore
         [Header("UI Text & Components")]
         [SerializeField] private TextMeshProUGUI instructionText;
         [SerializeField] private TextMeshProUGUI scoreValueText;
+        [SerializeField] private TextMeshProUGUI cdRatioDisplayText;
         [SerializeField] private Slider scoreSlider;
         [SerializeField] private Button submitButton;
+        [SerializeField] private PseudoHapticsController pseudoHapticsController;
 
         public event Action<int> OnScoreSubmitted;
 
@@ -36,6 +38,30 @@ namespace PseudoHapticsCore
             }
 
             HideAllUI();
+        }
+
+        private void Update()
+        {
+            // pseudoHapticsController が未割り当ての場合は自動探索
+            if (pseudoHapticsController == null)
+            {
+                pseudoHapticsController = UnityEngine.Object.FindAnyObjectByType<PseudoHapticsController>();
+            }
+
+            // リアルタイムに現在の C/D 比を表示更新
+            if (cdRatioDisplayText != null)
+            {
+                float currentCd = pseudoHapticsController != null ? pseudoHapticsController.CurrentCdRatio : 1.0f;
+                cdRatioDisplayText.text = $"C/D Ratio: {currentCd:F2}";
+            }
+        }
+
+        public void UpdateCdRatioDisplay(float cdRatio)
+        {
+            if (cdRatioDisplayText != null)
+            {
+                cdRatioDisplayText.text = $"C/D Ratio: {cdRatio:F2}";
+            }
         }
 
         public void ShowFixationCross(bool show)

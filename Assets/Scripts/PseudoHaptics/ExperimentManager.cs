@@ -60,10 +60,13 @@ namespace PseudoHapticsCore
         [SerializeField] private InputActionProperty eyeGazeRotationAction;
 
         [Header("Default Test Conditions")]
+        [Tooltip("Trueの場合、実験管理による自動C/D比変更を行わず、PseudoHapticsControllerのInspector設定値を優先します")]
+        [SerializeField] private bool useManualCdRatio = true;
+
         [SerializeField] private List<TrialCondition> defaultConditions = new List<TrialCondition>
         {
-            new TrialCondition { cdRatio = 0.5f, targetHeight = 0.3f, customTag = "Heavy (CD=0.5)" },
             new TrialCondition { cdRatio = 1.0f, targetHeight = 0.3f, customTag = "Normal (CD=1.0)" },
+            new TrialCondition { cdRatio = 0.5f, targetHeight = 0.3f, customTag = "Heavy (CD=0.5)" },
             new TrialCondition { cdRatio = 2.0f, targetHeight = 0.3f, customTag = "Light (CD=2.0)" }
         };
 
@@ -135,7 +138,10 @@ namespace PseudoHapticsCore
 
             if (pseudoHapticsController != null)
             {
-                pseudoHapticsController.CurrentCdRatio = cond.cdRatio;
+                if (!useManualCdRatio)
+                {
+                    pseudoHapticsController.CurrentCdRatio = cond.cdRatio;
+                }
                 pseudoHapticsController.ResetObjectPosition(objectStartPos);
             }
 

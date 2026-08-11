@@ -1,4 +1,7 @@
 using UnityEngine;
+using UnityEngine.XR.Interaction.Toolkit;
+using UnityEngine.XR.Interaction.Toolkit.Interactables;
+using UnityEngine.XR.Interaction.Toolkit.Interactors;
 
 namespace PseudoHapticsCore
 {
@@ -14,6 +17,9 @@ namespace PseudoHapticsCore
         [Tooltip("適用されるC/D比 (Control/Display Ratio)")]
         [SerializeField] private float currentCdRatio = 1.0f;
 
+        [Tooltip("Trueの場合、実験マネージャーからの自動上書きを防ぎ、Inspectorでの設定値を常に最優先します")]
+        [SerializeField] private bool useInspectorCdRatioAlways = true;
+
         [Tooltip("Y軸方向のみにPseudo-Haptics効果を適用するか (True: Y軸のみスケール, XZは手と同等)")]
         [SerializeField] private bool lockXzTranslation = true;
 
@@ -23,7 +29,10 @@ namespace PseudoHapticsCore
         public float CurrentCdRatio
         {
             get => currentCdRatio;
-            set => currentCdRatio = Mathf.Max(0.01f, value);
+            set
+            {
+                currentCdRatio = Mathf.Max(0.01f, value);
+            }
         }
 
         public bool IsGrabbed => isGrabbed;
@@ -32,6 +41,8 @@ namespace PseudoHapticsCore
         private Vector3 initialControllerPos;
         private Vector3 initialObjectPos;
         private Rigidbody rb;
+        private IXRInteractor activeInteractor;
+        private XRGrabInteractable grabInteractable;
 
         private void Awake()
         {
@@ -40,7 +51,61 @@ namespace PseudoHapticsCore
             {
                 rb = gameObject.AddComponent<Rigidbody>();
             }
-            rb.isKinematic = true;
+        }
+
+        private void OnEnable()
+        {
+            grabInteractable = GetComponent<XRGrabInteractable>();
+            if (grabInteractable != null)
+            {
+                // XRGrabInteractable が1:1で位置を直接上書きするのを防止
+                grabInteractable.trackPosition = false;
+                grabInteractable.trackRotation = false;
+
+                grabInteractable.selectEntered.AddListener(OnSelectEntered);
+                grabInteractable.selectExited.AddListener(OnSelectExited);
+            }
+        }
+
+        private void OnDisable()
+        {
+            if (grabInteractable != null)
+            {
+                grabInteractable.selectEntered.RemoveListener(OnSelectEntered);
+                grabInteractable.selectExited.RemoveListener(OnSelectExited);
+            }
+        }
+
+        private void OnSelectEntered(SelectEnterEventArgs args)
+        {
+            if (args.interactorObject != null)
+            {
+                activeInteractor = args.interactorObject;
+                Transform attachTransform = activeInteractor.GetAttachTransform(grabInteractable);
+                Vector3 startPos = attachTransform != null ? attachTransform.position : activeInteractor.transform.position;
+                OnGrabStart(startPos);
+            }
+        }
+
+        private void OnSelectExited(SelectExitEventArgs args)
+        {
+            activeInteractor = null;
+            OnGrabRelease();
+        }
+
+        private void LateUpdate()
+        {
+            // XRGrabInteractable や手動デバッグ操作で掴まれている間、毎フレーム C/D比に基づいた位置計算を適用
+            if (isGrabbed)
+            {
+                Vector3 currentCtrlPos = transform.position;
+                if (activeInteractor != null)
+                {
+                    Transform attachTransform = activeInteractor.GetAttachTransform(grabInteractable);
+                    currentCtrlPos = attachTransform != null ? attachTransform.position : activeInteractor.transform.position;
+                }
+                OnGrabUpdate(currentCtrlPos);
+            }
         }
 
         /// <summary>
@@ -79,12 +144,12 @@ namespace PseudoHapticsCore
 
             if (!lockXzTranslation)
             {
-                targetPosition.x += controllerDelta.x;
-                targetPosition.z += controllerDelta.z;
+                targetPosition.x += controllerDelta.x * currentCdRatio;
+                targetPosition.z += controllerDelta.z * currentCdRatio;
             }
             else
             {
-                // X, Z方向は手の相対移動にそのまま追従
+                // X, Z方向は手の相対移動にそのまま1:1追従
                 targetPosition.x += controllerDelta.x;
                 targetPosition.z += controllerDelta.z;
             }

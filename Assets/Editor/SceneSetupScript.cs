@@ -67,20 +67,37 @@ public class SceneSetupScript
         // 6. 実験対象オブジェクト (Pseudo-Haptics Target Cube)
         GameObject targetObj = GameObject.CreatePrimitive(PrimitiveType.Cube);
         targetObj.name = "PseudoHapticTargetCube";
-        targetObj.transform.position = new Vector3(0, 1.0f, 0.5f);
+        targetObj.transform.position = new Vector3(0, 1.2f, 0.5f);
         targetObj.transform.localScale = new Vector3(0.15f, 0.15f, 0.15f);
+
+        // 鮮やかな赤色のマテリアルを作成して割り当て
+        Renderer cubeRenderer = targetObj.GetComponent<Renderer>();
+        if (cubeRenderer != null)
+        {
+            Material redMaterial = new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
+            redMaterial.name = "TargetCubeRedMaterial";
+            redMaterial.color = new Color(1.0f, 0.05f, 0.05f); // 鮮やかな赤色
+            cubeRenderer.material = redMaterial;
+        }
         
+        // 物理演算（重力）の有効化
         Rigidbody rb = targetObj.GetComponent<Rigidbody>();
         if (rb == null) rb = targetObj.AddComponent<Rigidbody>();
-        rb.isKinematic = true;
+        rb.isKinematic = false; // スタート時に重力で落下させる
+        rb.useGravity = true;
 
-        // XR Simple Grab Interactable 相当のコンポーネントアタッチ
+        // XR Grab Interactable（コントローラーでの掴み機能）の自動追加
+        targetObj.AddComponent<UnityEngine.XR.Interaction.Toolkit.Interactables.XRGrabInteractable>();
+
+        // 擬似触覚コントローラーのアタッチ
         PseudoHapticsCore.PseudoHapticsController phController = targetObj.AddComponent<PseudoHapticsCore.PseudoHapticsController>();
 
-        // 7. 視線固定ターゲット (Fixation Cross Target)
+        // 7. 視線固定ターゲット (Fixation Cross Target) - Main Camera の直下に配置
         GameObject fixationCrossObj = GameObject.CreatePrimitive(PrimitiveType.Quad);
         fixationCrossObj.name = "FixationCrossTarget";
-        fixationCrossObj.transform.position = new Vector3(0, 1.6f, 1.5f);
+        fixationCrossObj.transform.SetParent(mainCameraObj.transform); // Main Camera の直下に配置
+        fixationCrossObj.transform.localPosition = new Vector3(0, 0, 1.5f); // カメラ前方 1.5m
+        fixationCrossObj.transform.localRotation = Quaternion.identity;
         fixationCrossObj.transform.localScale = new Vector3(0.12f, 0.12f, 0.12f);
         Object.DestroyImmediate(fixationCrossObj.GetComponent<Collider>());
 
@@ -103,10 +120,33 @@ public class SceneSetupScript
         canvas.renderMode = RenderMode.WorldSpace;
         canvasObj.AddComponent<CanvasScaler>();
         canvasObj.AddComponent<GraphicRaycaster>();
-        canvasObj.transform.position = new Vector3(0, 1.6f, 1.0f);
+        canvasObj.transform.position = new Vector3(0, 1.8f, 1.0f); // 見やすい位置（高さ1.8m, 前方1m）
         canvasObj.transform.localScale = new Vector3(0.002f, 0.002f, 0.002f);
 
+        // RectTransform のサイズ設定
+        RectTransform canvasRect = canvasObj.GetComponent<RectTransform>();
+        if (canvasRect != null) canvasRect.sizeDelta = new Vector2(800, 400);
+
+        // C/D Ratio リアルタイム表示テキスト
+        GameObject cdTextObj = new GameObject("CdRatioDisplayText");
+        cdTextObj.transform.SetParent(canvasObj.transform, false);
+        TextMeshProUGUI cdText = cdTextObj.AddComponent<TextMeshProUGUI>();
+        cdText.fontSize = 48;
+        cdText.alignment = TextAlignmentOptions.Center;
+        cdText.color = Color.yellow;
+        cdText.text = "C/D Ratio: 1.00";
+        RectTransform cdRect = cdTextObj.GetComponent<RectTransform>();
+        if (cdRect != null)
+        {
+            cdRect.sizeDelta = new Vector2(600, 100);
+            cdRect.anchoredPosition = new Vector2(0, 100);
+        }
+
         PseudoHapticsCore.ScoreUIController scoreUI = canvasObj.AddComponent<PseudoHapticsCore.ScoreUIController>();
+        SerializedObject scoreUISerialized = new SerializedObject(scoreUI);
+        scoreUISerialized.FindProperty("cdRatioDisplayText").objectReferenceValue = cdText;
+        scoreUISerialized.FindProperty("pseudoHapticsController").objectReferenceValue = phController;
+        scoreUISerialized.ApplyModifiedProperties();
 
         // コンポーネント参照の完全バインド
         SerializedObject managerSerialized = new SerializedObject(experimentManager);
@@ -116,6 +156,10 @@ public class SceneSetupScript
         managerSerialized.FindProperty("scoreUIController").objectReferenceValue = scoreUI;
         managerSerialized.FindProperty("targetObject").objectReferenceValue = targetObj.transform;
         managerSerialized.FindProperty("controllerTransform").objectReferenceValue = rightControllerObj.transform;
+        
+        SerializedProperty manualProp = managerSerialized.FindProperty("useManualCdRatio");
+        if (manualProp != null) manualProp.boolValue = true;
+
         managerSerialized.ApplyModifiedProperties();
 
         SerializedObject validatorSerialized = new SerializedObject(eyeValidator);
