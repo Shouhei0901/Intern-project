@@ -19,9 +19,20 @@ namespace PseudoHapticsCore
         [SerializeField] private TextMeshProUGUI instructionText;
         [SerializeField] private TextMeshProUGUI scoreValueText;
         [SerializeField] private TextMeshProUGUI cdRatioDisplayText;
+        [SerializeField] private TextMeshProUGUI loggingStatusText;
         [SerializeField] private Slider scoreSlider;
         [SerializeField] private Button submitButton;
         [SerializeField] private PseudoHapticsController pseudoHapticsController;
+
+        [Header("Display Settings")]
+        [Tooltip("Trueの場合、キャンバスが常にメインカメラの方向を向きます")]
+        [SerializeField] private bool faceCameraAlways = true;
+
+        [Tooltip("Trueの場合、画面左上に常時確実なGUIオーバーレイを表示します")]
+        [SerializeField] private bool enableOnGuiOverlay = true;
+
+        private string currentStatusMessage = "IDLE";
+        private Color currentStatusColor = Color.gray;
 
         public event Action<int> OnScoreSubmitted;
 
@@ -37,6 +48,7 @@ namespace PseudoHapticsCore
                 scoreSlider.onValueChanged.AddListener(OnSliderValueChanged);
             }
 
+            SetLoggingStatus("IDLE", Color.gray);
             HideAllUI();
         }
 
@@ -53,6 +65,48 @@ namespace PseudoHapticsCore
             {
                 float currentCd = pseudoHapticsController != null ? pseudoHapticsController.CurrentCdRatio : 1.0f;
                 cdRatioDisplayText.text = $"C/D Ratio: {currentCd:F2}";
+            }
+        }
+
+        private void LateUpdate()
+        {
+            // ビルボード処理: カメラの方向を向かせて裏返りや見失いを防止
+            if (faceCameraAlways && Camera.main != null)
+            {
+                Vector3 forward = transform.position - Camera.main.transform.position;
+                if (forward.sqrMagnitude > 0.001f)
+                {
+                    transform.rotation = Quaternion.LookRotation(forward, Vector3.up);
+                }
+            }
+        }
+
+        private void OnGUI()
+        {
+            if (!enableOnGuiOverlay) return;
+
+            // 画面左上にステータス（IDLE / RECORDING / SAVED）のみを描画
+            GUIStyle boxStyle = new GUIStyle(GUI.skin.box);
+            boxStyle.fontSize = 20;
+            boxStyle.fontStyle = FontStyle.Bold;
+            boxStyle.normal.textColor = currentStatusColor;
+            boxStyle.alignment = TextAnchor.MiddleCenter;
+
+            GUI.Box(new Rect(20, 20, 180, 48), currentStatusMessage, boxStyle);
+        }
+
+        public void SetLoggingStatus(string message, Color? color = null)
+        {
+            currentStatusMessage = message;
+            if (color.HasValue)
+            {
+                currentStatusColor = color.Value;
+            }
+
+            if (loggingStatusText != null)
+            {
+                loggingStatusText.text = currentStatusMessage;
+                loggingStatusText.color = currentStatusColor;
             }
         }
 
