@@ -37,14 +37,14 @@ namespace PseudoHapticsCore
 
         public bool IsGrabbed => isGrabbed;
 
-        private bool isGrabbed = false;
-        private Vector3 initialControllerPos;
-        private Vector3 initialObjectPos;
-        private Rigidbody rb;
-        private IXRInteractor activeInteractor;
-        private XRGrabInteractable grabInteractable;
+        protected bool isGrabbed = false;
+        protected Vector3 initialControllerPos;
+        protected Vector3 initialObjectPos;
+        protected Rigidbody rb;
+        protected IXRInteractor activeInteractor;
+        protected XRGrabInteractable grabInteractable;
 
-        private void Awake()
+        protected virtual void Awake()
         {
             rb = GetComponent<Rigidbody>();
             if (rb == null)
@@ -53,7 +53,7 @@ namespace PseudoHapticsCore
             }
         }
 
-        private void OnEnable()
+        protected virtual void OnEnable()
         {
             grabInteractable = GetComponent<XRGrabInteractable>();
             if (grabInteractable != null)
@@ -67,7 +67,7 @@ namespace PseudoHapticsCore
             }
         }
 
-        private void OnDisable()
+        protected virtual void OnDisable()
         {
             if (grabInteractable != null)
             {
@@ -76,7 +76,7 @@ namespace PseudoHapticsCore
             }
         }
 
-        private void OnSelectEntered(SelectEnterEventArgs args)
+        protected virtual void OnSelectEntered(SelectEnterEventArgs args)
         {
             if (args.interactorObject != null)
             {
@@ -87,13 +87,13 @@ namespace PseudoHapticsCore
             }
         }
 
-        private void OnSelectExited(SelectExitEventArgs args)
+        protected virtual void OnSelectExited(SelectExitEventArgs args)
         {
             activeInteractor = null;
             OnGrabRelease();
         }
 
-        private void LateUpdate()
+        protected virtual void LateUpdate()
         {
             // XRGrabInteractable や手動デバッグ操作で掴まれている間、毎フレーム C/D比に基づいた位置計算を適用
             if (isGrabbed)
@@ -112,7 +112,7 @@ namespace PseudoHapticsCore
         /// 把持（Grab）開始時の初期化処理
         /// </summary>
         /// <param name="controllerPos">掴み開始時点のコントローラー世界座標</param>
-        public void OnGrabStart(Vector3 controllerPos)
+        public virtual void OnGrabStart(Vector3 controllerPos)
         {
             isGrabbed = true;
             initialControllerPos = controllerPos;
@@ -130,7 +130,7 @@ namespace PseudoHapticsCore
         /// 把持中の毎フレーム更新処理。C/D比に基づく仮想変位の適用。
         /// </summary>
         /// <param name="controllerPos">現在のコントローラー世界座標</param>
-        public void OnGrabUpdate(Vector3 controllerPos)
+        public virtual void OnGrabUpdate(Vector3 controllerPos)
         {
             if (!isGrabbed) return;
 
@@ -160,7 +160,7 @@ namespace PseudoHapticsCore
         /// <summary>
         /// 把持解除（Release）時の処理
         /// </summary>
-        public void OnGrabRelease()
+        public virtual void OnGrabRelease()
         {
             if (!isGrabbed) return;
 
@@ -176,7 +176,7 @@ namespace PseudoHapticsCore
         /// <summary>
         /// オブジェクトを初期状態・指定位置に安全にリセット
         /// </summary>
-        public void ResetObjectPosition(Vector3 resetPosition)
+        public virtual void ResetObjectPosition(Vector3 resetPosition)
         {
             isGrabbed = false;
             transform.position = resetPosition;

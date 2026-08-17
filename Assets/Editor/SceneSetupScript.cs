@@ -6,8 +6,20 @@ using UnityEngine.XR.Interaction.Toolkit;
 using UnityEngine.XR.Interaction.Toolkit.Interactors;
 using TMPro;
 
+[InitializeOnLoad]
 public class SceneSetupScript
 {
+    static SceneSetupScript()
+    {
+        EditorApplication.delayCall += () =>
+        {
+            if (!EditorPrefs.GetBool("DrillPressSetupDone_v1", false))
+            {
+                SetupApplicationSceneWithDrillPress();
+                EditorPrefs.SetBool("DrillPressSetupDone_v1", true);
+            }
+        };
+    }
     [MenuItem("PseudoHaptics/Generate Core System Main Scene with XRI Rig")]
     public static void GenerateCoreSystemScene()
     {
@@ -209,6 +221,135 @@ public class SceneSetupScript
         string scenePath = "Assets/Scenes/CoreSystemMain.unity";
         EditorSceneManager.SaveScene(newScene, scenePath);
         Debug.Log($"[SceneSetupScript] CoreSystemMain scene updated with XRI Rig at: {scenePath}");
+    }
+
+    [MenuItem("PseudoHaptics/Setup Application Scene with DrillPress")]
+    public static void SetupApplicationSceneWithDrillPress()
+    {
+        Debug.Log("[SceneSetupScript] Setting up ApplicationSystemMain with DrillPress Pseudo-Haptics...");
+
+        string scenePath = "Assets/Scenes/ApplicationSystemMain.unity";
+        var scene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
+
+        // 1. DrillPress の検索
+        GameObject drillPressObj = GameObject.Find("DrillPress");
+        if (drillPressObj == null)
+        {
+            // シーン内の全ルートから探索
+            foreach (var root in scene.GetRootGameObjects())
+            {
+                if (root.name.Contains("DrillPress") || root.name.Contains("Drill"))
+                {
+                    drillPressObj = root;
+                    break;
+                }
+            }
+        }
+
+        if (drillPressObj == null)
+        {
+            Debug.LogError("[SceneSetupScript] DrillPress object not found in ApplicationSystemMain scene!");
+            return;
+        }
+
+        // DrillPress の位置・スケール・回転の最適化
+        drillPressObj.transform.position = new Vector3(0, 0.75f, 0.65f); // ユーザーの目の前・手が届く高さ
+
+        // 2. 子パーツ (001: ハンドル, 002: 主軸, 本体) の探索
+        Transform handleTransform = drillPressObj.transform.Find("13604_Drill_Press_v1_L2.001");
+        Transform spindleTransform = drillPressObj.transform.Find("13604_Drill_Press_v1_L2.002");
+
+        if (handleTransform == null || spindleTransform == null)
+        {
+            foreach (Transform child in drillPressObj.transform)
+            {
+                if (child.name.Contains(".001") || child.name.ToLower().Contains("handle")) handleTransform = child;
+                if (child.name.Contains(".002") || child.name.ToLower().Contains("spindle")) spindleTransform = child;
+            }
+        }
+
+        if (handleTransform == null || spindleTransform == null)
+        {
+            Debug.LogError($"[SceneSetupScript] Could not find handle (.001) or spindle (.002)! Handle: {handleTransform}, Spindle: {spindleTransform}");
+            return;
+        }
+
+        // 3. ハンドル (001) のコンポーネントセットアップ
+        GameObject handleObj = handleTransform.gameObject;
+
+        // コライダーの追加・設定 (掴みやすいサイズに設定)
+        BoxCollider handleCollider = handleObj.GetComponent<BoxCollider>();
+        if (handleCollider == null) handleCollider = handleObj.AddComponent<BoxCollider>();
+        handleCollider.isTrigger = false;
+        // FBX座標系に合わせたコライダーサイズ (ハンドル全体をカバー)
+        handleCollider.center = new Vector3(16.6f, -129.0f, -3.6f);
+        handleCollider.size = new Vector3(20.0f, 55.0f, 50.0f);
+
+        // Rigidbody (Kinematic)
+        Rigidbody handleRb = handleObj.GetComponent<Rigidbody>();
+        if (handleRb == null) handleRb = handleObj.AddComponent<Rigidbody>();
+        handleRb.isKinematic = true;
+        handleRb.useGravity = false;
+
+        // XRGrabInteractable
+        var grabInteractable = handleObj.GetComponent<UnityEngine.XR.Interaction.Toolkit.Interactables.XRGrabInteractable>();
+        if (grabInteractable == null) grabInteractable = handleObj.AddComponent<UnityEngine.XR.Interaction.Toolkit.Interactables.XRGrabInteractable>();
+        grabInteractable.trackPosition = false;
+        grabInteractable.trackRotation = false;
+        grabInteractable.throwOnDetach = false;
+        grabInteractable.movementType = UnityEngine.XR.Interaction.Toolkit.Interactables.XRBaseInteractable.MovementType.Kinematic;
+
+        // DrillPressPseudoHapticsController
+        var drillController = handleObj.GetComponent<PseudoHapticsCore.DrillPressPseudoHapticsController>();
+        if (drillController == null) drillController = handleObj.AddComponent<PseudoHapticsCore.DrillPressPseudoHapticsController>();
+
+        SerializedObject drillSerialized = new SerializedObject(drillController);
+        drillSerialized.FindProperty("handleTransform").objectReferenceValue = handleTransform;
+        drillSerialized.FindProperty("spindleTransform").objectReferenceValue = spindleTransform;
+        drillSerialized.FindProperty("maxStrokeDistance").floatValue = 0.15f;
+        drillSerialized.FindProperty("movementScaleMultiplier").floatValue = 1.0f;
+        drillSerialized.FindProperty("useWorldVerticalMovement").boolValue = true;
+        drillSerialized.FindProperty("maxRotationAngle").floatValue = 120.0f;
+        drillSerialized.FindProperty("handleRotationAxis").vector3Value = new Vector3(1, 0, 0);
+        drillSerialized.FindProperty("invertRotation").boolValue = false;
+        drillSerialized.FindProperty("springBackOnRelease").boolValue = true;
+        drillSerialized.FindProperty("springBackSpeed").floatValue = 6.0f;
+        drillSerialized.FindProperty("currentCdRatio").floatValue = 1.0f;
+        drillSerialized.FindProperty("useInspectorCdRatioAlways").boolValue = true;
+        drillSerialized.ApplyModifiedProperties();
+
+        drillController.CaptureInitialTransforms();
+
+        // 4. 不要な初期立方体 (PseudoHapticTargetCube) の非アクティブ化
+        GameObject cubeObj = GameObject.Find("PseudoHapticTargetCube");
+        if (cubeObj != null)
+        {
+            cubeObj.SetActive(false);
+        }
+
+        // 5. ExperimentManager のバインド更新
+        var experimentManager = Object.FindAnyObjectByType<PseudoHapticsCore.ExperimentManager>();
+        if (experimentManager != null)
+        {
+            SerializedObject managerSerialized = new SerializedObject(experimentManager);
+            managerSerialized.FindProperty("pseudoHapticsController").objectReferenceValue = drillController;
+            managerSerialized.FindProperty("targetObject").objectReferenceValue = handleTransform;
+            managerSerialized.FindProperty("objectStartPos").vector3Value = handleTransform.position;
+            managerSerialized.ApplyModifiedProperties();
+        }
+
+        // 6. ScoreUIController のバインド更新
+        var scoreUI = Object.FindAnyObjectByType<PseudoHapticsCore.ScoreUIController>();
+        if (scoreUI != null)
+        {
+            SerializedObject scoreSerialized = new SerializedObject(scoreUI);
+            scoreSerialized.FindProperty("pseudoHapticsController").objectReferenceValue = drillController;
+            scoreSerialized.ApplyModifiedProperties();
+        }
+
+        // 7. シーンの保存
+        EditorSceneManager.SaveScene(scene, scenePath);
+        Debug.Log($"[SceneSetupScript] ApplicationSystemMain setup completed and saved at: {scenePath}");
     }
 
     [MenuItem("PseudoHaptics/Open Experiment Logs Folder (Project Root)")]
