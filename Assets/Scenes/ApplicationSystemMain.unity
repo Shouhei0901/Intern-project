@@ -1789,7 +1789,7 @@ Transform:
   m_GameObject: {fileID: 1980000001}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0.166, y: 1.29, z: 0.614}
+  m_LocalPosition: {x: 0.166, y: 1.3, z: 0.555}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -1993,12 +1993,12 @@ MonoBehaviour:
   handleTransform: {fileID: 143059452}
   spindleTransform: {fileID: 143059451}
   maxStrokeDistance: 0.15
-  movementScaleMultiplier: 1
+  movementScaleMultiplier: 0.5
   useWorldVerticalMovement: 1
   localSpindleMoveAxis: {x: 0, y: 1, z: 0}
   maxRotationAngle: 120
   handleRotationAxis: {x: 1, y: 0, z: 0}
-  invertRotation: 0
+  invertRotation: 1
   springBackOnRelease: 1
   springBackSpeed: 6
   currentStrokeProgress: 0

@@ -313,8 +313,9 @@ namespace PseudoHapticsCore
                 // ピボット点（向かって右側のハンドルハブ中心）
                 Vector3 pivot = initialPivotPos != Vector3.zero ? initialPivotPos : transform.position;
                 
-                // ワールド空間の回転差分（X軸周りの回転）
-                Quaternion rotDelta = Quaternion.AngleAxis(rotationAngle, Vector3.right);
+                // ワールド空間の回転軸（インスペクターの handleRotationAxis を使用、未指定時は Vector3.right）
+                Vector3 axis = handleRotationAxis.sqrMagnitude > 0.001f ? handleRotationAxis.normalized : Vector3.right;
+                Quaternion rotDelta = Quaternion.AngleAxis(rotationAngle, axis);
 
                 // ピボット位置を中心とした回転変換を適用
                 handleTransform.position = pivot + rotDelta * (initialHandleWorldPos - pivot);
