@@ -6,20 +6,8 @@ using UnityEngine.XR.Interaction.Toolkit;
 using UnityEngine.XR.Interaction.Toolkit.Interactors;
 using TMPro;
 
-[InitializeOnLoad]
-public class SceneSetupScript
+public static class SceneSetupScript
 {
-    static SceneSetupScript()
-    {
-        EditorApplication.delayCall += () =>
-        {
-            if (!EditorPrefs.GetBool("DrillPressSetupDone_v1", false))
-            {
-                SetupApplicationSceneWithDrillPress();
-                EditorPrefs.SetBool("DrillPressSetupDone_v1", true);
-            }
-        };
-    }
     [MenuItem("PseudoHaptics/Generate Core System Main Scene with XRI Rig")]
     public static void GenerateCoreSystemScene()
     {
@@ -253,7 +241,8 @@ public class SceneSetupScript
         }
 
         // DrillPress の位置・スケール・回転の最適化
-        drillPressObj.transform.position = new Vector3(0, 0.75f, 0.65f); // ユーザーの目の前・手が届く高さ
+        // Y=0.0f (床面設置) に置くことで、ハンドルが自然な胸・手元高さ (Y=1.29m) に配置される
+        drillPressObj.transform.position = new Vector3(0, 0.0f, 0.65f);
 
         // 2. 子パーツ (001: ハンドル, 002: 主軸, 本体) の探索
         Transform handleTransform = drillPressObj.transform.Find("13604_Drill_Press_v1_L2.001");
@@ -274,34 +263,51 @@ public class SceneSetupScript
             return;
         }
 
-        // 3. ハンドル (001) のコンポーネントセットアップ
-        GameObject handleObj = handleTransform.gameObject;
+        // 3. ハンドル操作用プロキシターゲット (DrillPressHandleGrabTarget) のセットアップ
+        // FBX子オブジェクトの複合回転・スケールによるコライダー歪みを排除するため、
+        // ワールド空間の正確なハンドル位置にクリーンな操作用Interactableを配置します。
+        GameObject grabTargetObj = GameObject.Find("DrillPressHandleGrabTarget");
+        if (grabTargetObj == null)
+        {
+            grabTargetObj = new GameObject("DrillPressHandleGrabTarget");
+        }
 
-        // コライダーの追加・設定 (掴みやすいサイズに設定)
-        BoxCollider handleCollider = handleObj.GetComponent<BoxCollider>();
-        if (handleCollider == null) handleCollider = handleObj.AddComponent<BoxCollider>();
-        handleCollider.isTrigger = false;
-        // FBX座標系に合わせたコライダーサイズ (ハンドル全体をカバー)
-        handleCollider.center = new Vector3(16.6f, -129.0f, -3.6f);
-        handleCollider.size = new Vector3(20.0f, 55.0f, 50.0f);
+        // ハンドルの視覚メッシュ中心位置 (ワールド座標: 向かって右側) に正確に配置
+        grabTargetObj.transform.position = new Vector3(0.166f, 1.29f, 0.614f);
+        grabTargetObj.transform.rotation = Quaternion.identity;
+        grabTargetObj.transform.localScale = Vector3.one;
+
+        // クリーンな球体コライダー (半径14cm: 掴みやすく、かつ手前に飛び出さない最適サイズ)
+        SphereCollider sphereCol = grabTargetObj.GetComponent<SphereCollider>();
+        if (sphereCol == null) sphereCol = grabTargetObj.AddComponent<SphereCollider>();
+        sphereCol.center = Vector3.zero;
+        sphereCol.radius = 0.14f;
+        sphereCol.isTrigger = false;
+        sphereCol.enabled = true;
 
         // Rigidbody (Kinematic)
-        Rigidbody handleRb = handleObj.GetComponent<Rigidbody>();
-        if (handleRb == null) handleRb = handleObj.AddComponent<Rigidbody>();
+        Rigidbody handleRb = grabTargetObj.GetComponent<Rigidbody>();
+        if (handleRb == null) handleRb = grabTargetObj.AddComponent<Rigidbody>();
         handleRb.isKinematic = true;
         handleRb.useGravity = false;
 
         // XRGrabInteractable
-        var grabInteractable = handleObj.GetComponent<UnityEngine.XR.Interaction.Toolkit.Interactables.XRGrabInteractable>();
-        if (grabInteractable == null) grabInteractable = handleObj.AddComponent<UnityEngine.XR.Interaction.Toolkit.Interactables.XRGrabInteractable>();
+        var grabInteractable = grabTargetObj.GetComponent<UnityEngine.XR.Interaction.Toolkit.Interactables.XRGrabInteractable>();
+        if (grabInteractable == null) grabInteractable = grabTargetObj.AddComponent<UnityEngine.XR.Interaction.Toolkit.Interactables.XRGrabInteractable>();
         grabInteractable.trackPosition = false;
         grabInteractable.trackRotation = false;
         grabInteractable.throwOnDetach = false;
+        grabInteractable.retainTransformParent = true;
+        grabInteractable.useDynamicAttach = true;
+        grabInteractable.matchAttachPosition = false;
+        grabInteractable.matchAttachRotation = false;
+        grabInteractable.snapToColliderVolume = false;
+        grabInteractable.interactionLayers = ~0; // Everything
         grabInteractable.movementType = UnityEngine.XR.Interaction.Toolkit.Interactables.XRBaseInteractable.MovementType.Kinematic;
 
         // DrillPressPseudoHapticsController
-        var drillController = handleObj.GetComponent<PseudoHapticsCore.DrillPressPseudoHapticsController>();
-        if (drillController == null) drillController = handleObj.AddComponent<PseudoHapticsCore.DrillPressPseudoHapticsController>();
+        var drillController = grabTargetObj.GetComponent<PseudoHapticsCore.DrillPressPseudoHapticsController>();
+        if (drillController == null) drillController = grabTargetObj.AddComponent<PseudoHapticsCore.DrillPressPseudoHapticsController>();
 
         SerializedObject drillSerialized = new SerializedObject(drillController);
         drillSerialized.FindProperty("handleTransform").objectReferenceValue = handleTransform;
@@ -320,25 +326,35 @@ public class SceneSetupScript
 
         drillController.CaptureInitialTransforms();
 
-        // 4. 不要な初期立方体 (PseudoHapticTargetCube) の非アクティブ化
+        // 4. FBX子オブジェクト側に残った古いコンポーネントがあればクリーンアップ
+        var oldController = handleTransform.GetComponent<PseudoHapticsCore.DrillPressPseudoHapticsController>();
+        if (oldController != null) Object.DestroyImmediate(oldController);
+        var oldGrab = handleTransform.GetComponent<UnityEngine.XR.Interaction.Toolkit.Interactables.XRGrabInteractable>();
+        if (oldGrab != null) Object.DestroyImmediate(oldGrab);
+        var oldCol = handleTransform.GetComponent<Collider>();
+        if (oldCol != null) Object.DestroyImmediate(oldCol);
+        var oldRb = handleTransform.GetComponent<Rigidbody>();
+        if (oldRb != null) Object.DestroyImmediate(oldRb);
+
+        // 5. 不要な初期立方体 (PseudoHapticTargetCube) の非アクティブ化
         GameObject cubeObj = GameObject.Find("PseudoHapticTargetCube");
         if (cubeObj != null)
         {
             cubeObj.SetActive(false);
         }
 
-        // 5. ExperimentManager のバインド更新
+        // 6. ExperimentManager のバインド更新
         var experimentManager = Object.FindAnyObjectByType<PseudoHapticsCore.ExperimentManager>();
         if (experimentManager != null)
         {
             SerializedObject managerSerialized = new SerializedObject(experimentManager);
             managerSerialized.FindProperty("pseudoHapticsController").objectReferenceValue = drillController;
-            managerSerialized.FindProperty("targetObject").objectReferenceValue = handleTransform;
-            managerSerialized.FindProperty("objectStartPos").vector3Value = handleTransform.position;
+            managerSerialized.FindProperty("targetObject").objectReferenceValue = grabTargetObj.transform;
+            managerSerialized.FindProperty("objectStartPos").vector3Value = grabTargetObj.transform.position;
             managerSerialized.ApplyModifiedProperties();
         }
 
-        // 6. ScoreUIController のバインド更新
+        // 7. ScoreUIController のバインド更新
         var scoreUI = Object.FindAnyObjectByType<PseudoHapticsCore.ScoreUIController>();
         if (scoreUI != null)
         {
@@ -347,7 +363,7 @@ public class SceneSetupScript
             scoreSerialized.ApplyModifiedProperties();
         }
 
-        // 7. シーンの保存
+        // 8. シーンの保存
         EditorSceneManager.SaveScene(scene, scenePath);
         Debug.Log($"[SceneSetupScript] ApplicationSystemMain setup completed and saved at: {scenePath}");
     }

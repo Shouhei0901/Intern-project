@@ -64,6 +64,8 @@ namespace PseudoHapticsCore
         private Quaternion initialHandleLocalRot;
         private Quaternion initialHandleWorldRot;
         private Vector3 initialHandleLocalPos;
+        private Vector3 initialHandleWorldPos;
+        private Vector3 initialPivotPos;
 
         private float targetStrokeDisplacement = 0f;
         private bool isInitialized = false;
@@ -75,7 +77,6 @@ namespace PseudoHapticsCore
 
         protected override void Awake()
         {
-            // 基底のRigidbody初期化を抑制またはKinematic化
             rb = GetComponent<Rigidbody>();
             if (rb == null)
             {
@@ -85,43 +86,93 @@ namespace PseudoHapticsCore
             rb.useGravity = false;
 
             InitializeComponents();
+            ConfigureGrabInteractable();
+        }
+
+        protected override void OnEnable()
+        {
+            base.OnEnable();
+            ConfigureGrabInteractable();
+        }
+
+        protected override void OnDisable()
+        {
+            base.OnDisable();
         }
 
         private void Start()
         {
             CaptureInitialTransforms();
+            ConfigureGrabInteractable();
         }
 
         private void InitializeComponents()
         {
-            if (handleTransform == null)
+            if (handleTransform == null || handleTransform == transform)
             {
-                handleTransform = transform;
+                GameObject drillPress = GameObject.Find("DrillPress");
+                if (drillPress != null)
+                {
+                    Transform found001 = drillPress.transform.Find("13604_Drill_Press_v1_L2.001");
+                    if (found001 != null) handleTransform = found001;
+                }
             }
 
-            if (spindleTransform == null && transform.parent != null)
+            if (spindleTransform == null)
             {
-                // 親や兄弟から 002 (主軸) を自動検索
-                Transform found002 = transform.parent.Find("13604_Drill_Press_v1_L2.002");
-                if (found002 != null)
+                GameObject drillPress = GameObject.Find("DrillPress");
+                if (drillPress != null)
                 {
-                    spindleTransform = found002;
-                }
-                else
-                {
-                    // 部分一致検索
-                    foreach (Transform child in transform.parent)
-                    {
-                        if (child.name.Contains(".002") || child.name.ToLower().Contains("spindle"))
-                        {
-                            spindleTransform = child;
-                            break;
-                        }
-                    }
+                    Transform found002 = drillPress.transform.Find("13604_Drill_Press_v1_L2.002");
+                    if (found002 != null) spindleTransform = found002;
                 }
             }
 
             CaptureInitialTransforms();
+        }
+
+        /// <summary>
+        /// XRGrabInteractable およびコライダーの安全設定
+        /// </summary>
+        private void ConfigureGrabInteractable()
+        {
+            if (grabInteractable == null)
+            {
+                grabInteractable = GetComponent<XRGrabInteractable>();
+            }
+
+            if (grabInteractable != null)
+            {
+                if (grabInteractable.interactionManager == null)
+                {
+                    grabInteractable.interactionManager = Object.FindAnyObjectByType<XRInteractionManager>();
+                }
+
+                grabInteractable.trackPosition = false;
+                grabInteractable.trackRotation = false;
+                grabInteractable.throwOnDetach = false;
+                grabInteractable.retainTransformParent = true;
+                grabInteractable.movementType = XRBaseInteractable.MovementType.Kinematic;
+                grabInteractable.distanceCalculationMode = XRBaseInteractable.DistanceCalculationMode.ColliderVolume;
+                grabInteractable.useDynamicAttach = true;
+                grabInteractable.matchAttachPosition = false;
+                grabInteractable.matchAttachRotation = false;
+                grabInteractable.snapToColliderVolume = false;
+                grabInteractable.interactionLayers = ~0; // すべてのインタラクションレイヤーを許可
+
+                Collider col = GetComponent<Collider>();
+                if (col != null)
+                {
+                    col.enabled = true;
+                    col.isTrigger = false;
+
+                    if (grabInteractable.colliders == null || grabInteractable.colliders.Count == 0 || !grabInteractable.colliders.Contains(col))
+                    {
+                        grabInteractable.colliders.Clear();
+                        grabInteractable.colliders.Add(col);
+                    }
+                }
+            }
         }
 
         /// <summary>
@@ -134,7 +185,10 @@ namespace PseudoHapticsCore
                 initialHandleLocalRot = handleTransform.localRotation;
                 initialHandleWorldRot = handleTransform.rotation;
                 initialHandleLocalPos = handleTransform.localPosition;
+                initialHandleWorldPos = handleTransform.position;
             }
+
+            initialPivotPos = transform.position;
 
             if (spindleTransform != null)
             {
@@ -187,6 +241,8 @@ namespace PseudoHapticsCore
             isGrabbed = true;
             initialControllerPos = controllerPos;
 
+            Debug.Log($"[DrillPress] >>> Grab Started! ControllerPos: {controllerPos}, CurrentCdRatio: {CurrentCdRatio}, Spindle: {spindleTransform?.name}");
+
             if (rb != null)
             {
                 rb.isKinematic = true;
@@ -222,6 +278,7 @@ namespace PseudoHapticsCore
         public override void OnGrabRelease()
         {
             isGrabbed = false;
+            Debug.Log("[DrillPress] <<< Grab Released!");
         }
 
         /// <summary>
@@ -248,11 +305,20 @@ namespace PseudoHapticsCore
                 }
             }
 
-            // 2. ハンドル（DrillPress_V1_L2.001）の連動回転
+            // 2. ハンドル（DrillPress_V1_L2.001）の連動回転（ピボット中心のその場回転）
             if (handleTransform != null)
             {
                 float rotationAngle = currentStrokeProgress * maxRotationAngle * (invertRotation ? -1f : 1f);
-                handleTransform.localRotation = initialHandleLocalRot * Quaternion.AngleAxis(rotationAngle, handleRotationAxis.normalized);
+                
+                // ピボット点（向かって右側のハンドルハブ中心）
+                Vector3 pivot = initialPivotPos != Vector3.zero ? initialPivotPos : transform.position;
+                
+                // ワールド空間の回転差分（X軸周りの回転）
+                Quaternion rotDelta = Quaternion.AngleAxis(rotationAngle, Vector3.right);
+
+                // ピボット位置を中心とした回転変換を適用
+                handleTransform.position = pivot + rotDelta * (initialHandleWorldPos - pivot);
+                handleTransform.rotation = rotDelta * initialHandleWorldRot;
             }
         }
 
