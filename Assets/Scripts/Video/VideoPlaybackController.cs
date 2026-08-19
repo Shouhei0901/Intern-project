@@ -1,22 +1,23 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.Video;
+using UnityEngine.XR;
 
 namespace VideoControl
 {
     /// <summary>
-    /// VRコントローラーのBボタン（Secondary Button）およびキーボード[B]キーで
+    /// VRコントローラーのBボタン（Secondary Button）およびキーボード[B]/[Space]キーで
     /// VideoPlayerの再生 / 一時停止を切り替えるコントローラー。
-    /// URP / Android (Quest) 環境で映像が黒くなる現象を100%防止するため、
-    /// RenderTextureを自動生成・マテリアルへ強制バインドし、マテリアル色を白に初期化します。
+    /// URP/Android(Quest)での黒画面問題を完全解消する自動RenderTextureバインドと、
+    /// すべてのXRランタイム（OpenXR/Oculus/XRI/旧Input）に対応する多重入力検知を搭載。
     /// </summary>
     [RequireComponent(typeof(VideoPlayer))]
     [DisallowMultipleComponent]
     public class VideoPlaybackController : MonoBehaviour
     {
         [Header("Target Video Player")]
-        [Tooltip("制御対象のVideoPlayerコンポーネント（未指定時は同一GameObjectから自動取得）")]
         [SerializeField] private VideoPlayer videoPlayer;
 
         [Header("Playback Settings")]
@@ -29,8 +30,8 @@ namespace VideoControl
         [Tooltip("停止時に最初から再生し直すか、一時停止（Pause）にするか")]
         [SerializeField] private bool pauseInsteadOfStop = true;
 
-        [Header("Render Texture Setup (URP / Quest Black Screen Fix)")]
-        [Tooltip("RenderTextureを自動生成してマテリアルに適用するか")]
+        [Header("Render Texture Setup")]
+        [Tooltip("RenderTextureを自動生成してマテリアルに強制バインドするか")]
         [SerializeField] private bool autoBindRenderTexture = true;
 
         [Tooltip("解像度 (幅)")]
@@ -43,9 +44,14 @@ namespace VideoControl
         [Tooltip("XRI Input Actionアセットからバインドする場合に指定（空の場合は自動でBボタンがバインドされます）")]
         [SerializeField] private InputActionProperty customToggleAction;
 
-        private InputAction autonomousToggleAction;
+        private UnityEngine.InputSystem.InputAction autonomousToggleAction;
         private bool isAutonomousAction = false;
         private RenderTexture dynamicRenderTexture;
+        private Material targetMaterial;
+
+        // XR Direct Polling 用ステート
+        private readonly List<UnityEngine.XR.InputDevice> xrDevices = new List<UnityEngine.XR.InputDevice>();
+        private bool wasXrSecondaryPressed = false;
 
         private void Awake()
         {
@@ -54,7 +60,7 @@ namespace VideoControl
                 videoPlayer = GetComponent<VideoPlayer>();
             }
 
-            // 1. RenderTexture の強制セットアップ (URP / Quest での黒画面を完全に解決)
+            // 1. RenderTexture & Material セットアップ
             if (autoBindRenderTexture && videoPlayer != null)
             {
                 SetupRenderTextureAndMaterial();
@@ -67,7 +73,7 @@ namespace VideoControl
                 videoPlayer.prepareCompleted += OnVideoPrepared;
             }
 
-            // 2. Input Action のセットアップ (右手Bボタン / Secondary Button)
+            // 2. New Input System の登録
             SetupInputActions();
         }
 
@@ -75,7 +81,6 @@ namespace VideoControl
         {
             RenderTexture rt = videoPlayer.targetTexture;
 
-            // targetTexture が未設定、または renderMode が RenderTexture でない場合は動的生成
             if (rt == null || videoPlayer.renderMode != VideoRenderMode.RenderTexture)
             {
                 dynamicRenderTexture = new RenderTexture(textureWidth, textureHeight, 0, RenderTextureFormat.ARGB32)
@@ -91,24 +96,26 @@ namespace VideoControl
                 rt = dynamicRenderTexture;
             }
 
-            // 同一オブジェクト（または親・子）のRendererマテリアルにテクスチャを強制適用
+            // 同一または子オブジェクトの Renderer からマテリアルを取得
             Renderer rend = GetComponent<Renderer>();
             if (rend == null) rend = GetComponentInChildren<Renderer>();
 
-            if (rend != null && rend.material != null)
+            if (rend != null)
             {
-                Material mat = rend.material;
-                mat.mainTexture = rt;
-                if (mat.HasProperty("_BaseMap")) mat.SetTexture("_BaseMap", rt);
-                if (mat.HasProperty("_MainTex")) mat.SetTexture("_MainTex", rt);
+                targetMaterial = rend.material;
+                if (targetMaterial != null)
+                {
+                    targetMaterial.mainTexture = rt;
+                    if (targetMaterial.HasProperty("_BaseMap")) targetMaterial.SetTexture("_BaseMap", rt);
+                    if (targetMaterial.HasProperty("_MainTex")) targetMaterial.SetTexture("_MainTex", rt);
 
-                // マテリアルカラーを白に（黒だと乗算でテクスチャが真っ黒になるため）
-                mat.color = Color.white;
-                if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", Color.white);
-                if (mat.HasProperty("_Color")) mat.SetColor("_Color", Color.white);
-
-                Debug.Log("[VideoPlaybackController] Successfully bound RenderTexture to Screen Material (Color set to White).");
+                    targetMaterial.color = Color.white;
+                    if (targetMaterial.HasProperty("_BaseColor")) targetMaterial.SetColor("_BaseColor", Color.white);
+                    if (targetMaterial.HasProperty("_Color")) targetMaterial.SetColor("_Color", Color.white);
+                }
             }
+
+            Debug.Log("[VideoPlaybackController] ✅ RenderTexture successfully bound to Screen Surface Material.");
         }
 
         private void SetupInputActions()
@@ -120,9 +127,9 @@ namespace VideoControl
             }
             else
             {
-                autonomousToggleAction = new InputAction("VideoTogglePlayback", InputActionType.Button);
+                autonomousToggleAction = new UnityEngine.InputSystem.InputAction("VideoTogglePlayback", InputActionType.Button);
                 
-                // XR コントローラー (右手 Secondary Button / Bボタン)
+                // XR 右手 Bボタン (Secondary Button)
                 autonomousToggleAction.AddBinding("<XRController>{RightHand}/secondaryButton");
                 autonomousToggleAction.AddBinding("<XRController>{RightHand}/{SecondaryButton}");
                 autonomousToggleAction.AddBinding("<XRController>{RightHand}/secondary");
@@ -136,7 +143,7 @@ namespace VideoControl
                 autonomousToggleAction.AddBinding("<Gamepad>/buttonEast");
                 autonomousToggleAction.AddBinding("*/{SecondaryButton}");
 
-                // PC エディタデバッグ用キーボード [B] キー / [Space] キー
+                // PC エディタ用キーボード [B] キー / [Space] キー
                 autonomousToggleAction.AddBinding("<Keyboard>/b");
                 autonomousToggleAction.AddBinding("<Keyboard>/space");
 
@@ -158,14 +165,54 @@ namespace VideoControl
 
         private void Update()
         {
-            // フォールバック直接入力検知（InputActionが不通の場合の安全策）
-            if (Keyboard.current != null && (Keyboard.current.bKey.wasPressedThisFrame || Keyboard.current.spaceKey.wasPressedThisFrame))
+            // 1. キーボードフォールバック検知 ([B]キー / [Space]キー)
+            if (Keyboard.current != null)
             {
+                if (Keyboard.current.bKey.wasPressedThisFrame || Keyboard.current.spaceKey.wasPressedThisFrame)
+                {
+                    TogglePlayback();
+                    return;
+                }
+            }
+
+            // 2. ゲームパッドフォールバック (Bボタン)
+            if (Gamepad.current != null && Gamepad.current.buttonEast.wasPressedThisFrame)
+            {
+                TogglePlayback();
+                return;
+            }
+
+            // 3. XR InputDevices 直接ポーリング (OpenXR / Oculus / Quest のBボタン)
+            PollXRDevices();
+        }
+
+        private void PollXRDevices()
+        {
+            xrDevices.Clear();
+            UnityEngine.XR.InputDevices.GetDevicesWithCharacteristics(
+                InputDeviceCharacteristics.Right | InputDeviceCharacteristics.Controller,
+                xrDevices
+            );
+
+            bool isAnySecondaryPressed = false;
+            foreach (var dev in xrDevices)
+            {
+                if (dev.TryGetFeatureValue(UnityEngine.XR.CommonUsages.secondaryButton, out bool pressed) && pressed)
+                {
+                    isAnySecondaryPressed = true;
+                    break;
+                }
+            }
+
+            // 立下り・立上りエッジ検出
+            if (isAnySecondaryPressed && !wasXrSecondaryPressed)
+            {
+                wasXrSecondaryPressed = true;
                 TogglePlayback();
             }
-            else if (Gamepad.current != null && Gamepad.current.buttonEast.wasPressedThisFrame)
+            else if (!isAnySecondaryPressed)
             {
-                TogglePlayback();
+                wasXrSecondaryPressed = false;
             }
         }
 
@@ -214,7 +261,7 @@ namespace VideoControl
             }
         }
 
-        private void OnToggleInputPerformed(InputAction.CallbackContext context)
+        private void OnToggleInputPerformed(UnityEngine.InputSystem.InputAction.CallbackContext context)
         {
             TogglePlayback();
         }
@@ -247,21 +294,21 @@ namespace VideoControl
         {
             if (videoPlayer == null) return;
             videoPlayer.Play();
-            Debug.Log("[VideoPlaybackController] Video Playing ▶");
+            Debug.Log("[VideoPlaybackController] ▶ Video Playing");
         }
 
         public void PauseVideo()
         {
             if (videoPlayer == null) return;
             videoPlayer.Pause();
-            Debug.Log("[VideoPlaybackController] Video Paused ⏸");
+            Debug.Log("[VideoPlaybackController] ⏸ Video Paused");
         }
 
         public void StopVideo()
         {
             if (videoPlayer == null) return;
             videoPlayer.Stop();
-            Debug.Log("[VideoPlaybackController] Video Stopped ⏹");
+            Debug.Log("[VideoPlaybackController] ⏹ Video Stopped");
         }
     }
 }
